@@ -33,6 +33,16 @@ app.use(bodyParser.urlencoded({
 }));
 app.use(bodyParser.json());
 
+app.get("/", (req, res) => {
+    res.status(200).json({
+        message: "CS409 MP3 API is running!",
+        usage: {
+            users: "/api/users",
+            tasks: "/api/tasks"
+        }
+    });
+});
+
 // Use routes as a module (see index.js)
 require('./routes')(app, router);
 
