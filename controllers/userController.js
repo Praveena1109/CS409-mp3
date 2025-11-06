@@ -20,21 +20,25 @@ exports.getUsers = async (req, res, next) => {
     const skip = parseInt(req.query.skip) || 0;
     const limit = req.query.limit ? parseInt(req.query.limit) : 0;
 
-    if (req.query.count === 'true') {
-      const count = await User.countDocuments(where || {});
-      return res.status(200).json({ message: 'OK', data: count });
-    }
-
     let query = User.find(where || {});
     if (sort) query = query.sort(sort);
     if (select) query = query.select(select);
     query = query.skip(skip);
     if (limit) query = query.limit(limit);
 
+    if (req.query.count === 'true') {
+      const users = await query.exec();
+      return res.status(200).json({ message: 'OK', data: users.length });
+    }
+
     const users = await query.exec();
     res.status(200).json({ message: 'OK', data: users });
   } catch (err) {
-    next(err instanceof ErrorResponse ? err : new ErrorResponse('Failed to fetch users', 500));
+    next(
+      err instanceof ErrorResponse
+        ? err
+        : new ErrorResponse('Failed to fetch users', 500)
+    );
   }
 };
 
@@ -54,41 +58,64 @@ exports.getUserById = async (req, res, next) => {
 /*  POST /users  */
 exports.createUser = async (req, res, next) => {
   try {
-    const { name, email } = req.body;
-    if (!name || !email) return next(new ErrorResponse('Name and Email are required', 400));
-    const existing = await User.findOne({ email: new RegExp(`^${email}$`, 'i') });
-    if (existing) return next(new ErrorResponse('Email already exists', 400));
-    const user = await User.create({ name, email, pendingTasks: [] });
-    if (Array.isArray(req.body.pendingTasks)) {
-      for (const taskId of req.body.pendingTasks) {
-        const task = await Task.findById(taskId);
-        if (!task) continue; 
-        if (task.completed) continue; 
+    let { name, email, pendingTasks } = req.body;
+    if (!name || !email)
+      return next(new ErrorResponse('Name and Email are required', 400));
 
-        if (task.assignedUser && task.assignedUser !== user._id.toString()) {
-          const oldUser = await User.findById(task.assignedUser);
-          if (oldUser) {
-            oldUser.pendingTasks = oldUser.pendingTasks.filter(id => id !== task._id.toString());
-            await oldUser.save();
-          }
+    const existing = await User.findOne({
+      email: new RegExp(`^${email}$`, 'i'),
+    });
+    if (existing)
+      return next(new ErrorResponse('Email already exists', 400));
+
+    pendingTasks = Array.isArray(pendingTasks)
+      ? [...new Set(pendingTasks.map(String))]
+      : [];
+
+    const user = await User.create({
+      name,
+      email,
+      pendingTasks: [],
+      dateCreated: new Date(),
+    });
+
+    for (const taskId of pendingTasks) {
+      const task = await Task.findById(taskId);
+      if (!task)
+        return next(new ErrorResponse(`Task ID ${taskId} does not exist`, 400));
+      if (task.completed)
+        return next(new ErrorResponse(`Cannot assign completed task (${taskId})`, 400));
+
+      if (task.assignedUser && task.assignedUser !== user._id.toString()) {
+        const oldUser = await User.findById(task.assignedUser);
+        if (oldUser) {
+          oldUser.pendingTasks = oldUser.pendingTasks.filter(
+            id => id !== task._id.toString()
+          );
+          await oldUser.save();
         }
-        task.assignedUser = user._id.toString();
-        task.assignedUserName = user.name;
-        await task.save();
-        user.pendingTasks.push(task._id.toString());
       }
-      await user.save();
+
+      task.assignedUser = user._id.toString();
+      task.assignedUserName = user.name;
+      await task.save();
+
+      if (!user.pendingTasks.includes(task._id.toString()))
+        user.pendingTasks.push(task._id.toString());
     }
+
+    await user.save();
     res.status(201).json({ message: 'User created', data: user });
   } catch {
     next(new ErrorResponse('Failed to create user', 500));
   }
 };
 
+
 /*  PUT /users/:id  */
 exports.updateUser = async (req, res, next) => {
   try {
-    const { name, email, pendingTasks } = req.body;
+    let { name, email, pendingTasks } = req.body;
     if (!name || !email)
       return next(new ErrorResponse('Name and Email are required', 400));
 
@@ -111,35 +138,47 @@ exports.updateUser = async (req, res, next) => {
       t.assignedUserName = 'unassigned';
       await t.save();
     }
+
     user.name = name;
     user.email = email;
-    user.pendingTasks = Array.isArray(pendingTasks)
-      ? pendingTasks.map(String)
+
+    pendingTasks = Array.isArray(pendingTasks)
+      ? [...new Set(pendingTasks.map(String))]
       : [];
-    for (const taskId of user.pendingTasks) {
+    user.pendingTasks = [];
+
+    for (const taskId of pendingTasks) {
       const task = await Task.findById(taskId);
-      if (!task) continue; 
-      if (task.completed) continue; 
+      if (!task)
+        return next(new ErrorResponse(`Task ID ${taskId} does not exist`, 400));
+      if (task.completed)
+        return next(new ErrorResponse(`Cannot assign completed task (${taskId})`, 400));
 
       if (task.assignedUser && task.assignedUser !== user._id.toString()) {
         const oldUser = await User.findById(task.assignedUser);
         if (oldUser) {
           oldUser.pendingTasks = oldUser.pendingTasks.filter(
-            (id) => id !== task._id.toString()
+            id => id !== task._id.toString()
           );
           await oldUser.save();
         }
       }
+
       task.assignedUser = user._id.toString();
       task.assignedUserName = user.name;
       await task.save();
+
+      if (!user.pendingTasks.includes(task._id.toString()))
+        user.pendingTasks.push(task._id.toString());
     }
+
     await user.save();
     res.status(200).json({ message: 'User updated', data: user });
   } catch {
-    next(new ErrorResponse('Failed to update user', 400));
+    next(new ErrorResponse('Failed to update user', 500));
   }
 };
+
 
 /*  DELETE /users/:id  */
 exports.deleteUser = async (req, res, next) => {
@@ -157,6 +196,6 @@ exports.deleteUser = async (req, res, next) => {
     await user.deleteOne();
     res.status(204).send();
   } catch {
-    next(new ErrorResponse('Failed to delete user', 400));
+    next(new ErrorResponse('Failed to delete user', 500));
   }
 };
