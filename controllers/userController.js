@@ -20,16 +20,16 @@ exports.getUsers = async (req, res, next) => {
     const skip = parseInt(req.query.skip) || 0;
     const limit = req.query.limit ? parseInt(req.query.limit) : 0;
 
+    if (req.query.count === 'true') {
+      const count = await User.countDocuments(where || {});
+      return res.status(200).json({ message: 'OK', data: count });
+    }
+
     let query = User.find(where || {});
     if (sort) query = query.sort(sort);
     if (select) query = query.select(select);
     query = query.skip(skip);
     if (limit) query = query.limit(limit);
-
-    if (req.query.count === 'true') {
-      const users = await query.exec();
-      return res.status(200).json({ message: 'OK', data: users.length });
-    }
 
     const users = await query.exec();
     res.status(200).json({ message: 'OK', data: users });
