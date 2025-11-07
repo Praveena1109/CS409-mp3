@@ -20,15 +20,15 @@ exports.getTasks = async (req, res, next) => {
     const skip = parseInt(req.query.skip) || 0;
     const limit = parseInt(req.query.limit) || 100;
 
+    if (req.query.count === 'true') {
+      const count = await Task.countDocuments(where || {});
+      return res.status(200).json({ message: 'OK', data: count });
+    }
+
     let query = Task.find(where || {});
     if (sort) query = query.sort(sort);
     if (select) query = query.select(select);
     query = query.skip(skip).limit(limit);
-
-    if (req.query.count === 'true') {
-      const tasks = await query.exec();
-      return res.status(200).json({ message: 'OK', data: tasks.length });
-    }
 
     const tasks = await query.exec();
     res.status(200).json({ message: 'OK', data: tasks });
